@@ -1,0 +1,33 @@
+# Core training / modeling stack
+torch>=2.6.0
+transformers>=4.51.0
+datasets>=3.0.0
+trl>=0.15.0
+accelerate>=1.0.0
+peft>=0.14.0
+bitsandbytes>=0.45.0
+
+# HuggingFace Alignment Handbook — provides `alignment.data.DEFAULT_CHAT_TEMPLATE`
+# used by dpo.py / safedpo.py / mcp_test_cache.py. Not on PyPI; install from source.
+git+https://github.com/huggingface/alignment-handbook.git
+
+# Data / utility
+pandas>=2.0.0
+numpy>=1.26.0
+tqdm>=4.66.0
+packaging>=23.0
+
+# ---------------------------------------------------------------------------
+# Flash Attention 2 is required (attn_implementation="flash_attention_2" is
+# hardcoded in dpo.py, safedpo.py, mcp_test_cache.py, my_jailbreak_classifiers.py).
+# It must be installed *after* torch, in its own step, with build isolation
+# disabled (see README installation instructions):
+#
+#   pip install flash-attn==2.7.4.post1 --no-build-isolation
+# ---------------------------------------------------------------------------
+
+# Optional, only needed for specific CLI flags / features:
+# tensorboard      # --report_to tensorboard
+# wandb            # --report_to wandb
+# comet-ml         # --report_to comet_ml
+# deepspeed        # multi-GPU DeepSpeed training via accelerate
