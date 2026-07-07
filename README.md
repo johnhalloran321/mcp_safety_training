@@ -1,11 +1,20 @@
 # MCP Safety Training
 
+[![arXiv](https://img.shields.io/badge/arXiv-2505.23634-b31b1b.svg)](https://arxiv.org/abs/2505.23634)
+[![arXiv](https://img.shields.io/badge/arXiv-2605.11217-b31b1b.svg)](https://arxiv.org/abs/2605.11217)
+[![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-mcp--fbas-yellow)](https://huggingface.co/datasets/johnhalloran/mcp-fbas)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 Companion code for:
 
 - Halloran, John. "MCP Safety Training: Learning to Refuse Falsely Benign MCP Exploits using Improved Preference Alignment." arXiv:2505.23634 (2025).
 - Halloran, John T. "Leveraging RAG for Training-Free Alignment of LLMs." arXiv:2605.11217 (2026).
 
 DPO / SafeDPO training and evaluation code for aligning tool-using LLMs against **falsely-benign MCP exploits (FBAs)** — CVE-derived Model Context Protocol tool-use attacks phrased as ordinary, harmless-sounding requests.
+
+## Results
+
+No safety-tuned model (1B–14B params) refused more than 35% of FBAs out of the box. Standard DPO/SafeDPO alignment only pushed that to 48% at best. RAG-Pref, the training-free retrieval-based method proposed alongside this code, gets ~3x refusal-rate improvement alone and ~3.7x combined with DPO/SafeDPO — see arXiv:2505.23634 and arXiv:2605.11217 for full numbers.
 
 ## Contents
 
@@ -58,9 +67,9 @@ huggingface-cli login   # required to pull the gated mcp-fbas dataset / push tra
 
 ## Training
 
-`dpo.py` and `safedpo.py` both load the `mcp-fbas` `default`/`train` config, 4-bit-quantize the base model, wrap it in a LoRA adapter, and train through TRL's argument surface (`HfArgumentParser((ScriptArguments, DPOConfig, ModelConfig))`), so any standard `DPOConfig`/`ModelConfig` CLI flag applies. `safedpo.py` additionally accepts `--loss_type safedpo` and expects a dataset on disk (`load_from_disk`) with boolean `better_is_unsafe`/`worse_is_unsafe` columns.
+`dpo.py` and `safedpo.py` both hardcode the `mcp-fbas` `default`/`train` config as the training set, 4-bit-quantize the base model, wrap it in a LoRA adapter, and train through TRL's argument surface (`HfArgumentParser((ScriptArguments, DPOConfig, ModelConfig))`), so any standard `DPOConfig`/`ModelConfig` CLI flag applies. `--dataset_name` is still a required flag (part of TRL's `ScriptArguments`) but is only used for the Hub dataset name if `--push_to_hub` is set — any placeholder value works. `safedpo.py` additionally takes `--loss_type safedpo` and derives `better_is_unsafe`/`worse_is_unsafe` labels itself via `dataset.map(...)`: any `chosen` response equal to the fixed refusal string is labeled `worse_is_unsafe=True` (the attack/refusal pairs), everything else `False`.
 
-Both scripts are launched with `accelerate`, which handles device placement across whichever GPUs `CUDA_VISIBLE_DEVICES` exposes. `--output_dir` should be named so it can be picked back up as the `--peft-checkpoint` in evaluation (see below) — the convention used in this repo's own run scripts is `${prefix}-${model_shortname}`, e.g. `only-attack-dpo-Llama-3.1-8B`:
+Both scripts are launched with `accelerate`, which handles device placement across whichever GPUs `CUDA_VISIBLE_DEVICES` exposes. Name `--output_dir` so it can be picked back up as the `--peft-checkpoint` in evaluation (see below) — this repo's convention is `${prefix}-${model_shortname}`, e.g. `mcp-fbas-dpo-Llama-3.1-8B-Instruct`:
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0,1,2,3   # however many GPUs you have available
@@ -72,6 +81,7 @@ prefix="mcp-fbas-${loss}"
 output="${prefix}-${o}"
 
 accelerate launch dpo.py \
+    --dataset_name "mcp-fbas" \
     --model_name_or_path="${d}/${o}" \
     --per_device_train_batch_size 1 \
     --num_train_epochs 15 \
@@ -93,13 +103,14 @@ accelerate launch dpo.py \
     --lora_alpha=16
 ```
 
-`safedpo.py` takes the same invocation (swap `dpo.py` for `safedpo.py`), with `--dataset_name` and `--loss_type safedpo` added.
+`safedpo.py` takes the same invocation (swap `dpo.py` for `safedpo.py`), with `--loss_type safedpo` added.
 
 **Single GPU:** no separate code path is needed. Set `CUDA_VISIBLE_DEVICES` to a single device and just invoke the python file directly — `accelerate launch` is not required for single-GPU runs:
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0
 python3 dpo.py \
+    --dataset_name "mcp-fbas" \
     --model_name_or_path="${d}/${o}" \
     --per_device_train_batch_size 1 \
     ...   # remaining flags unchanged
