@@ -168,3 +168,9 @@ python3 mcp_judge_cache.py \
 ```
 
 Dataset: [johnhalloran/mcp-fbas](https://huggingface.co/datasets/johnhalloran/mcp-fbas) (CC BY-NC 4.0).
+
+## License
+
+The code in this repository is licensed under the **Apache License 2.0** (see [LICENSE](LICENSE)). `dpo.py`, `safedpo.py`, and `safedpo_trainer.py` are derivative works of [HuggingFace TRL](https://github.com/huggingface/trl), also Apache 2.0.
+
+Note this is separate from the dataset's license: **[johnhalloran/mcp-fbas](https://huggingface.co/datasets/johnhalloran/mcp-fbas) is CC BY-NC 4.0** (non-commercial, attribution required). The code license does not extend any rights to the data — check the dataset card before using it outside research/non-commercial contexts.
