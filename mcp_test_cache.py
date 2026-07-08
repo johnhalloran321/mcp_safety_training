@@ -138,7 +138,7 @@ def main():
     pipeline.tokenizer.pad_token = pipeline.tokenizer.eos_token
     pipeline.tokenizer.padding_side = "left"
     if pipeline.tokenizer.chat_template is None:
-        pipeline.tokenizer = setup_chat_format(pipeline.tokenizer)
+        pipeline.model, pipeline.tokenizer = setup_chat_format(pipeline.model, pipeline.tokenizer)
     if pipeline.tokenizer.model_max_length > 100_000:
         pipeline.tokenizer.model_max_length = 1024    
     output_by_retry = {}

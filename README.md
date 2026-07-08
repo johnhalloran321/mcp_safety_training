@@ -18,14 +18,14 @@ No safety-tuned model (1B–14B params) refused more than 35% of FBAs out of the
 
 ![Attack refusal rates across models, methods, and RAG variants](assets/refusal_rates.png)
 
-*Figure from arXiv:2605.11217. Solid `Base`/`DPO`/`SafeDPO` bars are what this repo trains and evaluates (`dpo.py`/`safedpo.py`, `mcp_test_cache.py`/`mcp_judge_cache.py`). The `Vanilla RAG` and `RAG-Pref` bars are the training-free methods from the same paper — see [Roadmap](#roadmap) below for their status in this codebase.*
+*Figure from arXiv:2605.11217. All bars shown are implemented in this repo: `Base`/`DPO`/`SafeDPO` via `dpo.py`/`safedpo.py`/`mcp_test_cache.py`, `Vanilla RAG`/`RAG-Pref` via `make_rag_dbs.py`/`rag_pref.py` (see [Safety Alignment Methods](#safety-alignment-methods)).*
 
-## Roadmap
+## Safety Alignment Methods
 
 - [x] DPO / SafeDPO training + evaluation
 - [x] OPAD (on-the-fly, training-free principle-guided decoding)
-- [ ] RAG-Pref (training-free retrieval-based alignment)
-- [ ] Vanilla RAG baseline
+- [x] RAG-Pref (training-free retrieval-based alignment)
+- [x] Vanilla RAG baseline (`rag_pref.py --vanilla-rag`)
 
 ## Contents
 
@@ -37,6 +37,8 @@ No safety-tuned model (1B–14B params) refused more than 35% of FBAs out of the
 | `opad.py` | On-the-fly, training-free principle-guided contrastive decoding ([OPAD](https://github.com/stevie1023/OPAD)), optionally layered on top of a DPO/SafeDPO PEFT checkpoint. |
 | `opad_dataset.py` | `Principle` class (system-prompt principles OPAD conditions on) and related dataset wrappers, adapted from OPAD. |
 | `opad_utils.py` | Decoding helpers (top-p filtering, log-prob extraction) adapted from OPAD. |
+| `make_rag_dbs.py` | Builds the attack/benign vector DBs RAG-Pref retrieves from, using [`golden`](https://github.com/johnhalloran321/golden). Run once before `rag_pref.py`. |
+| `rag_pref.py` | RAG-Pref: retrieves similar attack/benign examples at generation time and injects them into the system prompt, optionally layered on top of a DPO/SafeDPO PEFT checkpoint. |
 | `mcp_test_cache.py` | Generates model responses to attack/benign eval prompts, optionally loading a PEFT adapter checkpoint. |
 | `mcp_judge_cache.py` | Scores generated responses for refusal via a two-stage judge pipeline. |
 | `my_jailbreak_classifiers.py` | Refusal/jailbreak judge classifiers (`Llama3Guard1BJailbreakJudge`, `Llama3RefusalJudge`, `Llama3JailbreakJudge`, `StringClassifier`), adapted from JailbreakBench. |
@@ -78,6 +80,8 @@ pip install flash-attn==2.7.4.post1 --no-build-isolation
 
 huggingface-cli login   # required to pull the gated mcp-fbas dataset / push trained models
 ```
+
+`requirements.txt` includes [`golden`](https://github.com/johnhalloran321/golden) (installed directly from GitHub — it isn't on PyPI), the retrieval package `make_rag_dbs.py`/`rag_pref.py` depend on. If you only need DPO/SafeDPO/OPAD, you can skip it; RAG-Pref won't run without it.
 
 ## Training
 
@@ -215,6 +219,70 @@ python3 mcp_judge_cache.py \
 ```
 
 `--ratio` controls the contrastive strength between the principle-guided and unguided decoding passes; `--principle_id` selects which principle to condition on from `opad_dataset.Principle`.
+
+## RAG-Pref (retrieval-augmented, training-free alignment)
+
+RAG-Pref retrieves similar attack and benign examples at generation time and injects them into the system prompt as contrastive context, rather than fine-tuning the model. It needs vector DBs built once up front with `make_rag_dbs.py` (via [`golden`](https://github.com/johnhalloran321/golden)), then `rag_pref.py` retrieves from them at generation time — same two-stage eval as the other methods.
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+
+# 1. one-time setup: build the retrieval DBs (./mcp_attack_db, ./mcp_benign_db)
+python3 make_rag_dbs.py
+
+# 2. generate responses, retrieving context from those DBs at each step
+m="meta-llama/Llama-3.1-8B-Instruct"
+p="mcp-fbas-dpo-Llama-3.1-8B-Instruct"   # optional PEFT checkpoint; drop --peft-checkpoint to run RAG-Pref on the base model alone
+bs=10
+retries=10
+
+python3 rag_pref.py --pretrained-dir "${m}" \
+    --peft-checkpoint "${p}" \
+    --output attack_output.json \
+    --batch-size ${bs} \
+    --retries ${retries}
+
+python3 rag_pref.py --pretrained-dir "${m}" \
+    --peft-checkpoint "${p}" \
+    --output benign_output.json \
+    --batch-size ${bs} \
+    --check-benign \
+    --retries ${retries}
+
+# 3. judge for refusal
+python3 mcp_judge_cache.py \
+    --stage2 \
+    --benign-responses benign_output.json \
+    --attack-responses attack_output.json | tee "${m##*/}-rag_pref-scores.txt"
+```
+
+`make_rag_dbs.py` only needs to be run once per corpus (it persists all DBs to disk); re-run it if the underlying `mcp-fbas` training data changes. `--top-k` on `rag_pref.py` controls how many retrieved examples are injected into context per query (default 2).
+
+### Vanilla RAG baseline
+
+`--vanilla-rag` switches `rag_pref.py` to the naive RAG baseline RAG-Pref is compared against: a single retrieval pool of benign examples  (`./mcp_benign_db`) and a vanilla system prompt lacking contrastive instructions. Same invocation as RAG-Pref, plus the flag:
+
+```bash
+python3 rag_pref.py --pretrained-dir "${m}" \
+    --peft-checkpoint "${p}" \
+    --vanilla-rag \
+    --output attack_output.json \
+    --batch-size ${bs} \
+    --retries ${retries}
+
+python3 rag_pref.py --pretrained-dir "${m}" \
+    --peft-checkpoint "${p}" \
+    --vanilla-rag \
+    --output benign_output.json \
+    --batch-size ${bs} \
+    --check-benign \
+    --retries ${retries}
+
+python3 mcp_judge_cache.py \
+    --stage2 \
+    --benign-responses benign_output.json \
+    --attack-responses attack_output.json | tee "${m##*/}-vanilla_rag-scores.txt"
+```
 
 ## Citation
 

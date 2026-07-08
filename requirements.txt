@@ -11,6 +11,10 @@ bitsandbytes>=0.45.0
 # used by dpo.py / safedpo.py / mcp_test_cache.py. Not on PyPI; install from source.
 git+https://github.com/huggingface/alignment-handbook.git
 
+# Golden — retrieval package used by make_rag_dbs.py / rag_pref.py (RAG-Pref).
+# Not on PyPI; install from source. Skip if you don't need RAG-Pref.
+golden_retriever @ git+https://github.com/johnhalloran321/golden.git
+
 # Data / utility
 pandas>=2.0.0
 numpy>=1.26.0
