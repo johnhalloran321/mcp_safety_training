@@ -16,6 +16,17 @@ DPO / SafeDPO training and evaluation code for aligning tool-using LLMs against 
 
 No safety-tuned model (1B–14B params) refused more than 35% of FBAs out of the box. Standard DPO/SafeDPO alignment only pushed that to 48% at best. RAG-Pref, the training-free retrieval-based method proposed alongside this code, gets ~3x refusal-rate improvement alone and ~3.7x combined with DPO/SafeDPO — see arXiv:2505.23634 and arXiv:2605.11217 for full numbers.
 
+![Attack refusal rates across models, methods, and RAG variants](assets/refusal_rates.png)
+
+*Figure from arXiv:2605.11217. Solid `Base`/`DPO`/`SafeDPO` bars are what this repo trains and evaluates (`dpo.py`/`safedpo.py`, `mcp_test_cache.py`/`mcp_judge_cache.py`). The `Vanilla RAG` and `RAG-Pref` bars are the training-free methods from the same paper — see [Roadmap](#roadmap) below for their status in this codebase.*
+
+## Roadmap
+
+- [x] DPO / SafeDPO training + evaluation
+- [x] OPAD (on-the-fly, training-free principle-guided decoding)
+- [ ] RAG-Pref (training-free retrieval-based alignment)
+- [ ] Vanilla RAG baseline
+
 ## Contents
 
 | File | Purpose |
@@ -23,6 +34,9 @@ No safety-tuned model (1B–14B params) refused more than 35% of FBAs out of the
 | `dpo.py` | Standard DPO training entry point (TRL's `DPOTrainer`), 4-bit QLoRA. |
 | `safedpo.py` | SafeDPO training entry point; swaps in `SafeDPOTrainer` for TRL's `DPOTrainer`. |
 | `safedpo_trainer.py` | `SafeDPOTrainer`, a `DPOTrainer` subclass adding a safety-penalty term for preference pairs flagged `better_is_unsafe`/`worse_is_unsafe`, and a `"safedpo"` loss type. |
+| `opad.py` | On-the-fly, training-free principle-guided contrastive decoding ([OPAD](https://github.com/stevie1023/OPAD)), optionally layered on top of a DPO/SafeDPO PEFT checkpoint. |
+| `opad_dataset.py` | `Principle` class (system-prompt principles OPAD conditions on) and related dataset wrappers, adapted from OPAD. |
+| `opad_utils.py` | Decoding helpers (top-p filtering, log-prob extraction) adapted from OPAD. |
 | `mcp_test_cache.py` | Generates model responses to attack/benign eval prompts, optionally loading a PEFT adapter checkpoint. |
 | `mcp_judge_cache.py` | Scores generated responses for refusal via a two-stage judge pipeline. |
 | `my_jailbreak_classifiers.py` | Refusal/jailbreak judge classifiers (`Llama3Guard1BJailbreakJudge`, `Llama3RefusalJudge`, `Llama3JailbreakJudge`, `StringClassifier`), adapted from JailbreakBench. |
@@ -159,6 +173,48 @@ python3 mcp_judge_cache.py \
 ```
 
 `mcp_judge_cache.py` first scores every response with `ProtectAI/distilroberta-base-rejection-v1`, then (via `--stage2`) re-checks disputed cases with an LLM judge from `my_jailbreak_classifiers.py` (`Llama3RefusalJudge`); add `--store-refusals` to also dump the per-response judgments to disk. Output is strict/majority/average refusal and acceptance rates, per `retries` attempt, for both the attack and benign sets.
+
+## OPAD (on-the-fly, training-free decoding)
+
+`opad.py` is a training-free alternative to DPO/SafeDPO: at generation time it contrasts a "with-principle" system prompt against a "no-principle" one and reweights token probabilities accordingly, optionally layered on top of a DPO/SafeDPO PEFT checkpoint via `--peft-checkpoint`.
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+
+m="meta-llama/Llama-3.1-8B-Instruct"
+p="mcp-fbas-dpo-Llama-3.1-8B-Instruct"   # optional PEFT checkpoint; drop --peft-checkpoint to run OPAD on the base model alone
+
+# 1. attack prompts
+python3 opad.py \
+    --model_path "${m}" \
+    --peft-checkpoint "${p}" \
+    --principle_id 0 \
+    --temperature 0.5 \
+    --ratio 3.0 \
+    --retries 10 \
+    --batch-size 10 \
+    --output attack_output.json
+
+# 2. benign prompts
+python3 opad.py \
+    --model_path "${m}" \
+    --peft-checkpoint "${p}" \
+    --principle_id 0 \
+    --temperature 0.5 \
+    --ratio 3.0 \
+    --check-benign \
+    --retries 10 \
+    --batch-size 10 \
+    --output benign_output.json
+
+# 3. judge for refusal
+python3 mcp_judge_cache.py \
+    --stage2 \
+    --benign-responses benign_output.json \
+    --attack-responses attack_output.json
+```
+
+`--ratio` controls the contrastive strength between the principle-guided and unguided decoding passes; `--principle_id` selects which principle to condition on from `opad_dataset.Principle`.
 
 ## Citation
 
